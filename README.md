@@ -9,50 +9,57 @@
        |___/
 ```
 
-This project implements multi-objective optimization algorithms for recommending Python packages. The system analyzes dependencies from real GitHub projects and suggests complementary libraries based on usage patterns and semantic similarity.
+Multi-objective optimization for Python package recommendation using real dependency data from GitHub.
 
 ## Setup
 
-After cloning the repository, run the data rebuild script:
+After cloning, rebuild the similarity matrix:
 
 ```bash
 cd data
 python rebuild_data.py
 ```
 
-This combines the split similarity matrix files into the complete data file required by the algorithms.
+This reconstructs `package_similarity_matrix_10k.pkl` from split files.
 
 ## How it works
 
-PyCommend uses data from approximately 10,000 PyPI packages and 24,000 GitHub projects. When you provide a main library, the system finds packages that are commonly used together with it. The search considers both the frequency with which packages appear together and the similarity between their descriptions.
+The system analyzes 10,000 PyPI packages and 24,000 GitHub repositories to recommend complementary libraries. Given a target package, it optimizes three objectives:
 
-The project compares two different algorithms. MOEA/D divides the problem into smaller subproblems and solves each one separately. MOVNS explores different package combinations and gradually improves the solutions. Both try to balance three objectives at the same time: maximize package relevance, maintain semantic coherence, and avoid suggesting too many packages at once.
+- **Linked Usage (LU)**: Co-occurrence frequency in real projects
+- **Semantic Similarity (SS)**: SBERT embeddings from package descriptions
+- **Recommended Set Size (RSS)**: Number of suggestions (minimize)
 
-## Basic structure
+Two algorithms solve this multi-objective problem:
 
-The `data` folder contains pre-calculated matrices with information about co-occurrence and similarity between packages. The `optimizer` folder has the implementations of MOEA/D and MOVNS algorithms. The `evaluation` folder provides metrics to compare the quality of the solutions found.
+- **MOEA/D**: Decomposes into subproblems using Tchebycheff aggregation
+- **MOVNS**: Variable Neighborhood Search with Pareto-based local search
 
-To use the system, you need to have the data files in the correct folder and then you can run either algorithm by passing a package name as context. The result will be a list of recommended packages that make sense to use together with that context.
+## Data structure
+
+- `data/` - Pre-computed co-occurrence and similarity matrices
+- `optimizer/` - MOEA/D and MOVNS implementations
+- `evaluation/` - Quality metrics (hypervolume, spacing, IGD+)
+
+Run by providing a package name as context. Output is a Pareto front of recommendation sets.
 
 ## Authors
 
-This work was developed by Augusto Magalhães Pinto de Mendonça from Instituto de Computação at Universidade Federal Fluminense, Filipe Pessoa Sousa from Instituto de Matemática e Estatística at Universidade do Estado do Rio de Janeiro, and Igor Machado Coelho from Instituto de Computação at Universidade Federal Fluminense. The project is part of research on applying multi-objective metaheuristics to software engineering.
+Augusto Magalhães Pinto de Mendonça (IC/UFF), Filipe Pessoa Sousa (IME/UERJ), Igor Machado Coelho (IC/UFF).
 
-This work was presented at the International Conference on Variable Neighborhood Search (ICVNS 2025) held at https://2025.icvns.com/
+Presented at ICVNS 2025: https://2025.icvns.com/
 
 ## Acknowledgments
 
-This system is a tribute to Professor Pierre Hansen In Memoriam. We express our gratitude to Daniel Aloise (Full Professor at Polytechnique Montréal, Canada), Eduardo G. Pardo (Full Professor at Universidad Rey Juan Carlos, Spain), José Andrés Moreno Pérez (Full Professor at Universidad de La Laguna, Spain), and Angelo Sifaleras (Full Professor at University of Macedonia, Greece) for their contributions to the field of Variable Neighborhood Search.
+Tribute to Professor Pierre Hansen (In Memoriam). We thank Daniel Aloise (Polytechnique Montréal, Canada), Eduardo G. Pardo (Universidad Rey Juan Carlos, Spain), José Andrés Moreno Pérez (Universidad de La Laguna, Spain), and Angelo Sifaleras (University of Macedonia, Greece) for their contributions to Variable Neighborhood Search.
 
 ## Contributing
 
-This project is open for collaborations and improvements. Feel free to explore the code, suggest enhancements, or extend the algorithms to other programming language ecosystems.
+Open for collaboration. Extend to other ecosystems (npm, Maven, Cargo) or integrate additional objectives (security, licenses, version compatibility).
 
 ## License
 
-MIT License
-
-Copyright (c) 2024 Augusto Magalhães Pinto de Mendonça
+MIT License - Copyright (c) 2024 Augusto Magalhães Pinto de Mendonça
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
