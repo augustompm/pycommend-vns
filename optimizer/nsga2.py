@@ -1,16 +1,30 @@
 """
-nsga2_timed.py
+nsga2.py
 
-Descrição:
-    NSGA-II com budget de tempo fixo para comparação justa.
-    Roda até atingir o tempo limite em vez de número fixo de gerações.
+Description:
+    NSGA-II with fixed time budget for fair comparison.
+    Runs until time limit instead of fixed number of generations.
 
-Referências:
+References:
     - [1]: Deb et al. (2002) IEEE TEVC 6(2):182-197 - NSGA-II
 
-Origem da implementação:
-    - Adaptação do NSGA-II padrão para time budget
+Implementation origin:
+    - Adapted from standard NSGA-II for time budget
 
+Parameters (R2 compliance):
+    pop_size=50: standard GA population size from [1]
+    min_size=2, max_size=15: recommendation set bounds
+    ideal_size=5: target recommendation size
+    COOCCUR_POOL=200: top co-occurring packages for candidate pool
+    SEMANTIC_POOL=200: top semantically similar packages
+    CROSSOVER_PROB=0.5: uniform crossover probability
+    MUTATION_RATE=0.1: bit-flip mutation rate per gene
+    EXPLORATION_RATE=0.3: probability of adding random packages
+    STRONG_LINK_PERCENTILE=75: threshold for strong co-occurrence
+    STRONG_LINK_BONUS=0.1: bonus multiplier for strong links
+    SS_DIRECT_WEIGHT=0.7: weight for direct similarity in semantic score
+    SS_COHERENCE_WEIGHT=0.3: weight for coherence in semantic score
+    SIZE_PENALTY=0.05: penalty factor for deviation from ideal size
 """
 
 import numpy as np

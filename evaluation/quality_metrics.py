@@ -1,6 +1,17 @@
 """
-Quality Metrics for Multi-Objective Optimization
-Implementation of key metrics: Hypervolume, IGD+, Spacing, Spread
+quality_metrics.py
+
+Description:
+    Quality metrics for multi-objective optimization evaluation.
+    Implements Hypervolume, IGD+, Spacing, Spread, and related indicators.
+
+References:
+    - [1]: Zitzler & Thiele (1999) IEEE TEVC - Hypervolume indicator
+    - [2]: Ishibuchi et al. (2015) EMO - IGD+ indicator
+    - [3]: Schott (1995) - Spacing metric
+
+Implementation origin:
+    - Standard implementations from multi-objective optimization literature
 """
 
 import numpy as np
@@ -36,7 +47,6 @@ class QualityMetrics:
         if self.nadir_point is None:
             self.nadir_point = np.max(objectives, axis=0)
 
-        # Avoid division by zero
         range_obj = self.nadir_point - self.ideal_point
         range_obj[range_obj == 0] = 1.0
 
@@ -55,7 +65,6 @@ class QualityMetrics:
             for j in range(n):
                 if i == j or is_dominated[j]:
                     continue
-                # Check if j dominates i
                 if np.all(objectives[j] <= objectives[i]) and np.any(objectives[j] < objectives[i]):
                     is_dominated[i] = True
                     break
@@ -76,22 +85,16 @@ class QualityMetrics:
         if len(objectives) == 0:
             return 0.0
 
-        # Work directly with objectives without normalization for HV
-        # Since we have negative values for LU and SS (to maximize), we need to handle them
         pareto_front = self.filter_dominated(objectives)
 
         if len(pareto_front) == 0:
             return 0.0
 
-        # Set reference point if not provided
         if ref_point is None:
-            # For each objective, use worst value * 1.1
             ref_point = np.max(pareto_front, axis=0) * 1.1
         else:
-            # Convert ref_point to numpy array if needed
             ref_point = np.array(ref_point)
 
-        # Use WFG algorithm for 2D and 3D, Monte Carlo for higher dimensions
         n_obj = pareto_front.shape[1]
 
         if n_obj == 2:
@@ -105,7 +108,6 @@ class QualityMetrics:
         """
         Calculate 2D hypervolume exactly
         """
-        # Sort points by first objective
         points = points[points[:, 0].argsort()]
 
         volume = 0.0
@@ -123,7 +125,6 @@ class QualityMetrics:
 
             prev_x = point[0]
 
-        # Add last rectangle
         if prev_x < ref_point[0]:
             volume += (ref_point[0] - prev_x) * ref_point[1]
 
@@ -133,20 +134,16 @@ class QualityMetrics:
         """
         Calculate 3D hypervolume (simplified)
         """
-        # Use inclusion-exclusion principle
         volume = 0.0
 
         for point in points:
             if np.any(point > ref_point):
                 continue
 
-            # Volume of box from point to reference
             box_volume = np.prod(ref_point - point)
             volume += box_volume
 
-        # This is an approximation - exact 3D HV is complex
-        # For exact calculation, use external library
-        return volume / len(points)  # Average to avoid overcounting
+        return volume / len(points)
 
     def _hv_3d_exact(self, points, ref_point):
         """
@@ -155,29 +152,20 @@ class QualityMetrics:
         if len(points) == 0:
             return 0.0
 
-        # Sort points by first objective
         points = points[points[:, 0].argsort()]
 
         total_volume = 0.0
-
-        # For 3 objectives (LU, SS, RSS), we need to calculate the volume
-        # Since LU and SS are negative (maximization), and RSS is positive (minimization)
-        # We need to be careful with the calculation
 
         for i, point in enumerate(points):
             if np.any(point > ref_point):
                 continue
 
-            # Calculate the volume contribution of this point
-            # considering non-dominated region
             vol = 1.0
             for j in range(3):
                 vol *= abs(ref_point[j] - point[j])
 
-            # Subtract overlaps with previously processed points
             for j in range(i):
                 if np.all(points[j] <= point):
-                    # Calculate overlap volume
                     overlap = 1.0
                     for k in range(3):
                         overlap *= max(0, min(abs(ref_point[k] - point[k]),
@@ -193,10 +181,8 @@ class QualityMetrics:
         """
         Monte Carlo approximation for high-dimensional hypervolume
         """
-        # Generate random samples in the reference box
         samples = np.random.uniform(0, ref_point, (n_samples, len(ref_point)))
 
-        # Count samples dominated by at least one point
         dominated_count = 0
 
         for sample in samples:
@@ -205,7 +191,6 @@ class QualityMetrics:
                     dominated_count += 1
                     break
 
-        # Estimate hypervolume
         ref_volume = np.prod(ref_point)
         return (dominated_count / n_samples) * ref_volume
 
@@ -235,7 +220,6 @@ class QualityMetrics:
             min_distance = float('inf')
 
             for obj_point in norm_obj:
-                # IGD+ distance (only counts where ref is worse)
                 diff = np.maximum(ref_point - obj_point, 0)
                 distance = np.linalg.norm(diff)
 
@@ -262,11 +246,9 @@ class QualityMetrics:
                 raise ValueError("Reference set required for IGD")
             reference_set = self.reference_set
 
-        # Normalize both sets
         norm_obj = self.normalize_objectives(objectives)
         norm_ref = self.normalize_objectives(reference_set)
 
-        # Calculate minimum distances
         distances = cdist(norm_ref, norm_obj)
         min_distances = np.min(distances, axis=1)
 
@@ -285,13 +267,11 @@ class QualityMetrics:
         if len(objectives) < 2:
             return 0.0
 
-        # Normalize objectives
         norm_obj = self.normalize_objectives(objectives)
 
         n = len(norm_obj)
         distances = []
 
-        # Calculate minimum distance for each point
         for i in range(n):
             min_dist = float('inf')
             for j in range(n):
@@ -301,7 +281,6 @@ class QualityMetrics:
                         min_dist = dist
             distances.append(min_dist)
 
-        # Calculate spacing
         mean_dist = np.mean(distances)
         if mean_dist == 0:
             return 0.0
@@ -339,13 +318,11 @@ class QualityMetrics:
         if len(objectives) < 3:
             return 1.0
 
-        # Normalize objectives
         norm_obj = self.normalize_objectives(objectives)
 
         n = len(norm_obj)
         n_obj = norm_obj.shape[1]
 
-        # Find extreme points for each objective
         extreme_points = []
         for i in range(n_obj):
             min_idx = np.argmin(norm_obj[:, i])
@@ -354,7 +331,6 @@ class QualityMetrics:
 
         extreme_points = list(set(extreme_points))
 
-        # Calculate consecutive distances (simplified for any dimension)
         distances = []
         for i in range(n):
             min_dist = float('inf')
@@ -371,17 +347,13 @@ class QualityMetrics:
 
         mean_dist = np.mean(distances)
 
-        # Calculate distances to extremes
         df = dl = 0
         if len(extreme_points) >= 2:
-            # Distance to first extreme
             df = np.min([np.linalg.norm(norm_obj[i] - norm_obj[extreme_points[0]])
                         for i in range(n) if i != extreme_points[0]])
-            # Distance to last extreme
             dl = np.min([np.linalg.norm(norm_obj[i] - norm_obj[extreme_points[-1]])
                         for i in range(n) if i != extreme_points[-1]])
 
-        # Calculate spread
         numerator = df + dl + np.sum(np.abs(distances - mean_dist))
         denominator = df + dl + (len(distances)) * mean_dist
 
@@ -482,14 +454,11 @@ class QualityMetrics:
         if len(objectives) < 2:
             return 0.0
 
-        # Normalize objectives
         norm_obj = self.normalize_objectives(objectives)
 
-        # Calculate pairwise distances
         distances = cdist(norm_obj, norm_obj)
         np.fill_diagonal(distances, 0)
 
-        # Average distance to k nearest neighbors
         k = min(5, len(norm_obj) - 1)
         diversity_scores = []
 
@@ -511,10 +480,8 @@ class QualityMetrics:
         Returns:
             Maximum spread value (higher is better)
         """
-        # Normalize objectives
         norm_obj = self.normalize_objectives(objectives)
 
-        # Calculate range in each objective
         spreads = []
         for i in range(norm_obj.shape[1]):
             obj_range = np.max(norm_obj[:, i]) - np.min(norm_obj[:, i])
@@ -538,14 +505,12 @@ class QualityMetrics:
             'n_nondominated': len(self.filter_dominated(objectives))
         }
 
-        # Calculate metrics that don't need reference set
         results['hypervolume'] = self.hypervolume(objectives)
         results['spacing'] = self.spacing(objectives)
         results['spread'] = self.spread(objectives)
         results['diversity'] = self.diversity(objectives)
         results['maximum_spread'] = self.maximum_spread(objectives)
 
-        # Calculate metrics that need reference set
         if reference_set is not None or self.reference_set is not None:
             results['igd'] = self.igd(objectives, reference_set)
             results['igd_plus'] = self.igd_plus(objectives, reference_set)
@@ -563,14 +528,11 @@ class QualityMetrics:
         Returns:
             Array of reference points
         """
-        # Use Das-Dennis method
         if n_objectives == 2:
-            # For 2 objectives, create uniform line
             weights = np.linspace(0, 1, n_points)
             ref_points = np.column_stack([weights, 1 - weights])
 
         elif n_objectives == 3:
-            # For 3 objectives, create uniform simplex
             ref_points = []
             h = int(np.sqrt(n_points))
 
@@ -584,7 +546,6 @@ class QualityMetrics:
 
             ref_points = np.array(ref_points)
 
-            # Add random points if needed
             while len(ref_points) < n_points:
                 w = np.random.dirichlet(np.ones(n_objectives))
                 ref_points = np.vstack([ref_points, w])
@@ -592,7 +553,6 @@ class QualityMetrics:
             ref_points = ref_points[:n_points]
 
         else:
-            # For many objectives, use random sampling
             ref_points = np.random.dirichlet(np.ones(n_objectives), n_points)
 
         return ref_points
@@ -613,11 +573,9 @@ def compare_algorithms(objectives1, objectives2, name1="Algorithm 1", name2="Alg
     """
     metrics = QualityMetrics()
 
-    # Calculate metrics for both
     results1 = metrics.evaluate_all(objectives1)
     results2 = metrics.evaluate_all(objectives2)
 
-    # Compare
     comparison = {
         'algorithm_1': name1,
         'algorithm_2': name2,
@@ -628,12 +586,9 @@ def compare_algorithms(objectives1, objectives2, name1="Algorithm 1", name2="Alg
         value1 = results1[metric]
         value2 = results2[metric]
 
-        # Determine winner based on metric type
         if metric in ['hypervolume', 'diversity', 'maximum_spread', 'n_solutions', 'n_nondominated']:
-            # Higher is better
             winner = name1 if value1 > value2 else name2 if value2 > value1 else 'tie'
         else:
-            # Lower is better
             winner = name1 if value1 < value2 else name2 if value2 < value1 else 'tie'
 
         comparison['metrics'][metric] = {
