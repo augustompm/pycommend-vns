@@ -30,36 +30,40 @@ The system analyzes 10,000 PyPI packages and 24,000 GitHub repositories to recom
 - **Semantic Similarity (SS)**: SBERT embeddings from package descriptions
 - **Recommended Set Size (RSS)**: Number of suggestions (minimize)
 
-Two algorithms solve this multi-objective problem:
+Three algorithms solve this multi-objective problem:
 
-- **MOEA/D**: Decomposes into subproblems using Tchebycheff aggregation
-- **MOVNS**: Variable Neighborhood Search with Pareto-based local search
+- **MO-GVNS**: Multi-Objective General Variable Neighborhood Search following Duarte et al. (2015)
+- **NSGA-II**: Non-dominated Sorting Genetic Algorithm II following Deb et al. (2002)
+- **MOEA/D**: Multi-Objective Evolutionary Algorithm based on Decomposition following Zhang & Li (2007)
 
 ## Data structure
 
 - `data/` - Pre-computed co-occurrence and similarity matrices
-- `optimizer/` - MOEA/D and MOVNS implementations
-- `evaluation/` - Quality metrics (hypervolume, spacing, IGD+)
+- `optimizer/` - MO-GVNS, NSGA-II, and MOEA/D implementations
+- `evaluation/` - Quality metrics (hypervolume, spacing, epsilon-indicator)
 
 Run by providing a package name as context. Output is a Pareto front of recommendation sets.
 
+## References
+
+- Duarte et al. (2015) Multi-objective variable neighborhood search. J Glob Optim 63:515-536
+- Hansen et al. (2017) Variable neighborhood search: basics and variants. EURO J Comput Optim 5:423-454
+- Deb et al. (2002) A fast and elitist multiobjective genetic algorithm: NSGA-II. IEEE TEVC 6(2):182-197
+- Zhang & Li (2007) MOEA/D: A multiobjective evolutionary algorithm based on decomposition. IEEE TEVC 11(6):712-731
+
 ## Authors
 
-Augusto Magalhães Pinto de Mendonça (IC/UFF), Filipe Pessoa Sousa (IME/UERJ), Igor Machado Coelho (IC/UFF).
+Augusto Magalhaes Pinto de Mendonca (IC/UFF), Filipe Pessoa Sousa (IME/UERJ), Igor Machado Coelho (IC/UFF).
 
 Presented at ICVNS 2025: https://2025.icvns.com/
 
 ## Acknowledgments
 
-Tribute to Professor Pierre Hansen (In Memoriam). We thank Daniel Aloise (Polytechnique Montréal, Canada), Eduardo G. Pardo (Universidad Rey Juan Carlos, Spain), José Andrés Moreno Pérez (Universidad de La Laguna, Spain), and Angelo Sifaleras (University of Macedonia, Greece) for their contributions to Variable Neighborhood Search.
-
-## Contributing
-
-Open for collaboration. Extend to other ecosystems (npm, Maven, Cargo) or integrate additional objectives (security, licenses, version compatibility).
+Tribute to Professor Pierre Hansen (In Memoriam). We thank Daniel Aloise (Polytechnique Montreal, Canada), Eduardo G. Pardo (Universidad Rey Juan Carlos, Spain), Jose Andres Moreno Perez (Universidad de La Laguna, Spain), and Angelo Sifaleras (University of Macedonia, Greece) for their contributions to Variable Neighborhood Search.
 
 ## License
 
-MIT License - Copyright (c) 2024 Augusto Magalhães Pinto de Mendonça
+MIT License - Copyright (c) 2024 Augusto Magalhaes Pinto de Mendonca
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 

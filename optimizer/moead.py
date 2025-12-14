@@ -1,38 +1,50 @@
 """
-MOEA/D - Multi-Objective Evolutionary Algorithm based on Decomposition
-Zhang & Li (2007) IEEE Transactions on Evolutionary Computation
+moead_timed.py
+
+Descrição:
+    MOEA/D com budget de tempo fixo para comparação justa.
+    Roda até atingir o tempo limite em vez de número fixo de gerações.
+
+Referências:
+    - [1]: Zhang & Li (2007) IEEE TEVC 11(6):712-731 - MOEA/D
+
+Origem da implementação:
+    - Adaptação do MOEA/D padrão para time budget
+
 """
 
 import numpy as np
 import pickle
 import random
 from scipy.spatial.distance import cdist
+from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.cluster import KMeans
 import sys
 import os
+import time
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from evaluation.quality_metrics import QualityMetrics
 
 
-class MOEAD_Clean:
-    """
-    Clean MOEA/D implementation following Zhang & Li (2007)
-    """
+class MOEAD_Timed:
 
-    def __init__(self, main_package, pop_size=30, n_neighbors=10, max_gen=30,
-                 track_metrics=False):
+    def __init__(self, main_package, pop_size=50, n_neighbors=10,
+                 time_budget=20.0, decomposition='tchebycheff', track_metrics=False):
         self.main_package = main_package
         self.pop_size = pop_size
         self.n_neighbors = min(n_neighbors, pop_size - 1)
-        self.max_gen = max_gen
+        self.time_budget = time_budget
+        self.decomposition = decomposition
         self.n_objectives = 3
         self.track_metrics = track_metrics
 
         self.external_archive = []
+        self.archive_limit = 50
 
         self.min_size = 2
         self.max_size = 15
+        self.ideal_size = 5
 
         self.obj_min = np.array([-10000.0, -1.0, 2.0])
         self.obj_max = np.array([0.0, 0.0, 15.0])
@@ -49,11 +61,84 @@ class MOEAD_Clean:
                 'spacing': []
             }
 
-        print(f"MOEA/D Clean initialized: pop={pop_size}, neighbors={n_neighbors}, gen={max_gen}")
+        print(f"MOEA/D Timed initialized for '{main_package}'")
+        print(f"Time budget: {time_budget}s, Population: {pop_size}")
+
+    def load_all_data(self):
+        print("Loading data matrices...")
+        data_dir = 'data'
+
+        with open(os.path.join(data_dir, 'package_embeddings_10k.pkl'), 'rb') as f:
+            embeddings_data = pickle.load(f)
+
+        if isinstance(embeddings_data, dict):
+            if 'embeddings' in embeddings_data and 'package_names' in embeddings_data:
+                self.embeddings = embeddings_data['embeddings']
+                self.package_names = embeddings_data['package_names']
+            else:
+                self.package_names = list(embeddings_data.keys())
+                self.embeddings = np.array(list(embeddings_data.values()))
+
+        self.main_package_idx = self.package_names.index(self.main_package)
+        self.n_packages = len(self.package_names)
+
+        with open(os.path.join(data_dir, 'package_relationships_10k.pkl'), 'rb') as f:
+            rel_data = pickle.load(f)
+
+        if isinstance(rel_data, dict) and 'matrix' in rel_data:
+            self.rel_matrix = rel_data['matrix']
+        else:
+            self.rel_matrix = rel_data
+
+        with open(os.path.join(data_dir, 'package_similarity_matrix_10k.pkl'), 'rb') as f:
+            sim_data = pickle.load(f)
+
+        if isinstance(sim_data, dict) and 'similarity_matrix' in sim_data:
+            self.sim_matrix = sim_data['similarity_matrix']
+        else:
+            self.sim_matrix = sim_data
+
+        print(f"Data loaded: {self.n_packages} packages")
+
+    def initialize_semantic_components(self):
+        print("Initializing semantic components...")
+        n_clusters = min(200, self.n_packages // 50)
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=3)
+        self.cluster_labels = kmeans.fit_predict(self.embeddings)
+        self.target_cluster = self.cluster_labels[self.main_package_idx]
+
+    def compute_candidate_pools(self):
+        main_idx = self.main_package_idx
+
+        cooccur_scores = self.rel_matrix[main_idx].toarray().flatten()
+        self.cooccur_candidates = np.argsort(cooccur_scores)[::-1]
+        self.cooccur_candidates = self.cooccur_candidates[cooccur_scores[self.cooccur_candidates] > 0][:200]
+
+        target_embedding = self.embeddings[main_idx]
+        similarities = cosine_similarity([target_embedding], self.embeddings)[0]
+        self.semantic_candidates = np.argsort(similarities)[::-1][1:201]
+
+        self.cluster_candidates = np.where(self.cluster_labels == self.target_cluster)[0]
+        self.cluster_candidates = self.cluster_candidates[self.cluster_candidates != main_idx]
+
+        print(f"Candidate pools computed")
+
+    def generate_weight_vectors(self, n, m):
+        if m == 2:
+            weights = []
+            for i in range(n):
+                w1 = i / (n - 1) if n > 1 else 0.5
+                weights.append([w1, 1 - w1])
+            return np.array(weights)
+        else:
+            weights = []
+            for i in range(n):
+                w = np.random.dirichlet(np.ones(m))
+                weights.append(w)
+            return np.array(weights)
 
     def setup_moead(self):
-        """Setup MOEA/D components"""
-        self.weights = self.generate_uniform_weights(self.pop_size, self.n_objectives)
+        self.weights = self.generate_weight_vectors(self.pop_size, self.n_objectives)
 
         self.B = np.zeros((self.pop_size, self.n_neighbors), dtype=int)
         distances = cdist(self.weights, self.weights)
@@ -72,375 +157,266 @@ class MOEAD_Clean:
 
         all_objectives = np.array([ind['objectives'] for ind in self.population])
         self.z = np.min(all_objectives, axis=0)
+        self.nadir = np.max(all_objectives, axis=0)
 
-        print(f"Population initialized with {len(self.population)} solutions")
-        print(f"Ideal point: LU={-self.z[0]:.0f}, SS={-self.z[1]:.3f}, RSS={self.z[2]:.0f}")
-
-    def generate_uniform_weights(self, n_vectors, n_objectives):
-        """Generate uniform weight vectors"""
-        if n_objectives == 3:
-            weights = []
-            step = int(np.ceil((n_vectors * 2) ** (1.0/2)))
-            for i in range(step + 1):
-                for j in range(step + 1 - i):
-                    k = step - i - j
-                    if k >= 0:
-                        w = np.array([i, j, k]) / step
-                        w = w / (np.sum(w) + 1e-10)
-                        weights.append(w)
-
-            weights = np.array(weights)
-            if len(weights) > n_vectors:
-                indices = np.random.choice(len(weights), n_vectors, replace=False)
-                weights = weights[indices]
-            elif len(weights) < n_vectors:
-                while len(weights) < n_vectors:
-                    w = np.random.dirichlet(np.ones(n_objectives))
-                    weights = np.vstack([weights, w])
-
-            return weights[:n_vectors]
-        else:
-            return np.random.dirichlet(np.ones(n_objectives), n_vectors)
-
-    def load_all_data(self):
-        """Load all required data matrices"""
-        data_dir = 'data'
-
-        with open(os.path.join(data_dir, 'package_embeddings_10k.pkl'), 'rb') as f:
-            embeddings_data = pickle.load(f)
-
-        if isinstance(embeddings_data, dict):
-            if 'embeddings' in embeddings_data and 'package_names' in embeddings_data:
-                self.embeddings = embeddings_data['embeddings']
-                self.package_names = embeddings_data['package_names']
-            else:
-                self.package_names = list(embeddings_data.keys())
-                self.embeddings = np.array(list(embeddings_data.values()))
-        else:
-            raise ValueError("Cannot extract package names from embeddings")
-
-        self.main_package_idx = self.package_names.index(self.main_package)
-
-        with open(os.path.join(data_dir, 'package_relationships_10k.pkl'), 'rb') as f:
-            self.rel_matrix = pickle.load(f)
-
-        with open(os.path.join(data_dir, 'package_similarity_matrix_10k.pkl'), 'rb') as f:
-            self.sim_matrix = pickle.load(f)
-
-        self.n_packages = len(self.package_names)
-
-    def initialize_semantic_components(self):
-        """Initialize K-means clustering"""
-        n_clusters = min(200, self.n_packages // 10)
-        self.kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-        self.kmeans.fit(self.embeddings)
-        self.cluster_labels = self.kmeans.labels_
-
-    def compute_candidate_pools(self):
-        """Compute candidate pools for efficiency"""
-        cooccur_scores = self.rel_matrix[self.main_package_idx]
-        sem_scores = self.sim_matrix[self.main_package_idx]
-
-        top_n = 200
-        self.cooccur_pool = np.argsort(cooccur_scores)[-top_n:]
-        self.semantic_pool = np.argsort(sem_scores)[-top_n:]
-
-        self.combined_pool = np.unique(np.concatenate([
-            self.cooccur_pool,
-            self.semantic_pool
-        ]))
+        print(f"Generated {len(self.weights)} weight vectors")
 
     def smart_initialization(self):
-        """Smart initialization combining strategies"""
-        strategies = [
-            self.init_cooccurrence,
-            self.init_semantic,
-            self.init_cluster,
-            self.init_combined
-        ]
-
-        strategy = random.choice(strategies)
-        chromosome = strategy()
-
-        return chromosome
-
-    def init_cooccurrence(self):
-        """Initialize based on co-occurrence"""
         chromosome = np.zeros(self.n_packages)
-        cooccur_scores = self.rel_matrix[self.main_package_idx].copy()
-        cooccur_scores[self.main_package_idx] = -1
+        target_size = random.randint(3, 7)
 
-        n_select = random.randint(self.min_size, min(10, self.max_size))
-        top_indices = np.argsort(cooccur_scores)[-n_select:]
+        strategy = random.random()
 
-        chromosome[top_indices] = 1
-        return chromosome
-
-    def init_semantic(self):
-        """Initialize based on semantic similarity"""
-        chromosome = np.zeros(self.n_packages)
-        sem_scores = self.sim_matrix[self.main_package_idx].copy()
-        sem_scores[self.main_package_idx] = -1
-
-        n_select = random.randint(self.min_size, min(10, self.max_size))
-        top_indices = np.argsort(sem_scores)[-n_select:]
-
-        chromosome[top_indices] = 1
-        return chromosome
-
-    def init_cluster(self):
-        """Initialize from same cluster"""
-        chromosome = np.zeros(self.n_packages)
-        main_cluster = self.cluster_labels[self.main_package_idx]
-        cluster_members = np.where(self.cluster_labels == main_cluster)[0]
-
-        cluster_members = cluster_members[cluster_members != self.main_package_idx]
-
-        if len(cluster_members) > 0:
-            n_select = min(random.randint(self.min_size, min(10, self.max_size)),
-                          len(cluster_members))
-            selected = np.random.choice(cluster_members, n_select, replace=False)
+        if strategy < 0.4 and len(self.cooccur_candidates) > 0:
+            n_select = min(target_size, len(self.cooccur_candidates))
+            selected = np.random.choice(self.cooccur_candidates[:50], n_select, replace=False)
             chromosome[selected] = 1
 
-        return chromosome
+        elif strategy < 0.8 and len(self.semantic_candidates) > 0:
+            n_select = min(target_size, len(self.semantic_candidates))
+            selected = np.random.choice(self.semantic_candidates[:50], n_select, replace=False)
+            chromosome[selected] = 1
 
-    def init_combined(self):
-        """Combined strategy"""
-        chromosome = np.zeros(self.n_packages)
+        else:
+            n_cooccur = target_size // 2
+            n_semantic = target_size - n_cooccur
 
-        n_select = random.randint(self.min_size, min(10, self.max_size))
-        selected = np.random.choice(self.combined_pool, n_select, replace=False)
-        chromosome[selected] = 1
+            if len(self.cooccur_candidates) > 0 and n_cooccur > 0:
+                selected = np.random.choice(self.cooccur_candidates[:30],
+                                          min(n_cooccur, len(self.cooccur_candidates)), replace=False)
+                chromosome[selected] = 1
+
+            available_semantic = [c for c in self.semantic_candidates[:30] if chromosome[c] == 0]
+            if available_semantic and n_semantic > 0:
+                selected = np.random.choice(available_semantic,
+                                          min(n_semantic, len(available_semantic)), replace=False)
+                chromosome[selected] = 1
 
         return chromosome
 
     def evaluate_objectives(self, chromosome):
-        """Evaluate three objectives"""
+        main_idx = self.main_package_idx
         indices = np.where(chromosome == 1)[0]
 
-        if len(indices) == 0:
-            return np.array([0.0, 0.0, float(self.max_size)])
+        if len(indices) < self.min_size or len(indices) > self.max_size:
+            return np.array([float('inf')] * 3)
 
-        lu_score = self.calculate_linked_usage(indices)
-        ss_score = self.calculate_semantic_similarity(indices)
-        rss_score = len(indices)
+        linked_usage = 0
+        for idx in indices:
+            linked_usage += self.rel_matrix[main_idx, idx]
 
-        return np.array([-lu_score, -ss_score, rss_score])
+        threshold = np.percentile(self.rel_matrix[main_idx].data, 75) if self.rel_matrix[main_idx].data.size > 0 else 1.0
+        strong_links = len([idx for idx in indices if self.rel_matrix[main_idx, idx] > threshold])
+        lu_score = linked_usage * (1 + 0.1 * strong_links)
 
-    def calculate_linked_usage(self, indices):
-        """Calculate linked usage"""
-        if len(indices) <= 1:
-            return 0.0
+        if len(indices) > 0:
+            direct_similarities = [self.sim_matrix[main_idx, idx] for idx in indices]
 
-        submatrix = self.rel_matrix[np.ix_(indices, indices)]
-        total = submatrix.sum()
-        diagonal = np.diagonal(submatrix).sum()
+            if len(indices) > 1:
+                selected_embeddings = self.embeddings[indices]
+                centroid = np.mean(selected_embeddings, axis=0)
+                coherence = np.mean([
+                    cosine_similarity([self.embeddings[idx]], [centroid])[0, 0]
+                    for idx in indices
+                ])
+            else:
+                coherence = direct_similarities[0]
 
-        return float(total - diagonal)
+            weights = 1.0 / (1.0 + np.arange(len(direct_similarities)))
+            weighted_sim = np.average(sorted(direct_similarities, reverse=True), weights=weights/weights.sum())
+            ss_score = 0.7 * weighted_sim + 0.3 * coherence
+        else:
+            ss_score = 0.0
 
-    def calculate_semantic_similarity(self, indices):
-        """Calculate semantic similarity"""
-        if len(indices) == 0:
-            return 0.0
+        rss_score = float(len(indices))
+        size_penalty = abs(len(indices) - self.ideal_size) * 0.05
+        rss_score = rss_score * (1 + size_penalty)
 
-        embeddings_subset = self.embeddings[indices]
-        context_embedding = self.embeddings[self.main_package_idx]
+        objectives = np.array([-lu_score, -ss_score, rss_score])
 
-        similarities = []
-        for emb in embeddings_subset:
-            sim = np.dot(emb, context_embedding) / (
-                np.linalg.norm(emb) * np.linalg.norm(context_embedding) + 1e-10
-            )
-            similarities.append(sim)
+        self.obj_min = np.minimum(self.obj_min, objectives)
+        self.obj_max = np.maximum(self.obj_max, objectives)
 
-        return np.mean(similarities)
+        return objectives
 
     def normalize_objectives(self, objectives):
-        """Normalize objectives to [0,1]"""
         norm_obj = np.zeros_like(objectives)
         for i in range(len(objectives)):
             range_i = self.obj_max[i] - self.obj_min[i]
-            if range_i > 0:
+            if range_i > 1e-10:
                 norm_obj[i] = (objectives[i] - self.obj_min[i]) / range_i
-                norm_obj[i] = np.clip(norm_obj[i], 0, 1)
             else:
                 norm_obj[i] = 0.5
-        return norm_obj
+        return np.clip(norm_obj, 0, 1)
 
     def tchebycheff(self, objectives, weight, z):
-        """Tchebycheff decomposition"""
         norm_obj = self.normalize_objectives(objectives)
         norm_z = self.normalize_objectives(z)
 
-        max_val = -np.inf
-        for i in range(len(objectives)):
-            val = weight[i] * abs(norm_obj[i] - norm_z[i])
-            if val > max_val:
-                max_val = val
-
-        return max_val
-
-    def dominates(self, obj1, obj2):
-        """Check if obj1 dominates obj2"""
-        return np.all(obj1 <= obj2) and np.any(obj1 < obj2)
+        weighted_diff = weight * np.abs(norm_obj - norm_z)
+        return np.max(weighted_diff)
 
     def crossover(self, parent1, parent2):
-        """Uniform crossover"""
         child = np.zeros(self.n_packages)
 
         for i in range(self.n_packages):
-            if np.random.random() < 0.5:
+            if random.random() < 0.5:
                 child[i] = parent1[i]
             else:
                 child[i] = parent2[i]
 
-        indices = np.where(child == 1)[0]
-        if len(indices) > self.max_size:
-            remove_count = len(indices) - self.max_size
-            remove_indices = np.random.choice(indices, remove_count, replace=False)
-            child[remove_indices] = 0
-        elif len(indices) < self.min_size:
-            available = np.where(child == 0)[0]
-            available = available[available != self.main_package_idx]
-            if len(available) > 0:
-                add_count = min(self.min_size - len(indices), len(available))
-                add_indices = np.random.choice(available, add_count, replace=False)
-                child[add_indices] = 1
+        active = np.where(child == 1)[0]
+        if len(active) < self.min_size:
+            needed = self.min_size - len(active)
+            candidates = list(set(self.cooccur_candidates[:30]) | set(self.semantic_candidates[:30]))
+            candidates = [c for c in candidates if child[c] == 0 and c != self.main_package_idx]
+            if candidates:
+                to_add = random.sample(candidates, min(needed, len(candidates)))
+                child[to_add] = 1
+
+        elif len(active) > self.max_size:
+            to_remove = random.sample(list(active), len(active) - self.max_size)
+            child[to_remove] = 0
 
         return child
 
-    def mutation(self, chromosome):
-        """Polynomial mutation"""
+    def mutation(self, chromosome, rate=0.1):
         mutated = chromosome.copy()
-        mutation_rate = 1.0 / self.n_packages
 
         for i in range(self.n_packages):
-            if i == self.main_package_idx:
-                continue
-
-            if np.random.random() < mutation_rate:
+            if random.random() < rate and i != self.main_package_idx:
                 mutated[i] = 1 - mutated[i]
 
-        indices = np.where(mutated == 1)[0]
-        if len(indices) > self.max_size:
-            remove_count = len(indices) - self.max_size
-            remove_indices = np.random.choice(indices, remove_count, replace=False)
-            mutated[remove_indices] = 0
-        elif len(indices) < self.min_size and len(indices) > 0:
-            available = np.where(mutated == 0)[0]
-            available = available[available != self.main_package_idx]
-            if len(available) > 0:
-                add_count = min(self.min_size - len(indices), len(available))
-                add_indices = np.random.choice(available, add_count, replace=False)
-                mutated[add_indices] = 1
+        active = np.where(mutated == 1)[0]
+        if len(active) < self.min_size:
+            candidates = [i for i in range(self.n_packages) if mutated[i] == 0 and i != self.main_package_idx]
+            if candidates:
+                to_add = random.sample(candidates, min(self.min_size - len(active), len(candidates)))
+                mutated[to_add] = 1
+
+        elif len(active) > self.max_size:
+            to_remove = random.sample(list(active), len(active) - self.max_size)
+            mutated[to_remove] = 0
 
         return mutated
 
-    def update_external_archive(self, solution, objectives):
-        """Update external archive with non-dominated solutions"""
+    def dominates(self, obj1, obj2):
+        return all(obj1 <= obj2) and any(obj1 < obj2)
+
+    def update_archive(self, solution):
         dominated_indices = []
+        dominated_by_archive = False
 
-        for idx, (arch_sol, arch_obj) in enumerate(self.external_archive):
-            if self.dominates(objectives, arch_obj):
-                dominated_indices.append(idx)
-            elif self.dominates(arch_obj, objectives):
-                return
+        for i, archive_sol in enumerate(self.external_archive):
+            if self.dominates(solution['objectives'], archive_sol['objectives']):
+                dominated_indices.append(i)
+            elif self.dominates(archive_sol['objectives'], solution['objectives']):
+                dominated_by_archive = True
+                break
 
-        for idx in reversed(dominated_indices):
-            del self.external_archive[idx]
+        if dominated_by_archive:
+            return
 
-        self.external_archive.append((solution, objectives))
+        for i in reversed(dominated_indices):
+            del self.external_archive[i]
+
+        is_duplicate = any(
+            np.array_equal(solution['chromosome'], s['chromosome'])
+            for s in self.external_archive
+        )
+
+        if not is_duplicate:
+            self.external_archive.append({
+                'chromosome': solution['chromosome'].copy(),
+                'objectives': solution['objectives'].copy()
+            })
+
+        if len(self.external_archive) > self.archive_limit:
+            self.external_archive = self.external_archive[:self.archive_limit]
 
     def run(self):
-        """Main MOEA/D loop"""
-        print(f"\nStarting MOEA/D Clean...")
-        print("="*60)
+        print(f"\nStarting MOEA/D (Time Budget: {self.time_budget}s)")
+        print("=" * 60)
 
-        for generation in range(self.max_gen):
+        start_time = time.time()
+        generation = 0
+
+        for sol in self.population:
+            self.update_archive(sol)
+
+        while True:
+            elapsed = time.time() - start_time
+            if elapsed >= self.time_budget:
+                print(f"\nTime budget reached ({self.time_budget}s)")
+                break
+
             for i in range(self.pop_size):
-                k = np.random.randint(0, 2)
+                neighbors = self.B[i]
 
-                if k == 0:
-                    indices = self.B[i]
-                else:
-                    indices = np.random.choice(self.pop_size, self.n_neighbors, replace=False)
+                p1_idx = np.random.choice(neighbors)
+                p2_idx = np.random.choice(neighbors)
 
-                parent1_idx = indices[np.random.randint(0, len(indices))]
-                parent2_idx = indices[np.random.randint(0, len(indices))]
+                parent1 = self.population[p1_idx]['chromosome']
+                parent2 = self.population[p2_idx]['chromosome']
 
-                parent1 = self.population[parent1_idx]['chromosome']
-                parent2 = self.population[parent2_idx]['chromosome']
+                child_chromosome = self.crossover(parent1, parent2)
+                child_chromosome = self.mutation(child_chromosome)
+                child_objectives = self.evaluate_objectives(child_chromosome)
 
-                offspring = self.crossover(parent1, parent2)
-                offspring = self.mutation(offspring)
+                self.z = np.minimum(self.z, child_objectives)
 
-                offspring_obj = self.evaluate_objectives(offspring)
+                child_fitness = self.tchebycheff(child_objectives, self.weights[i], self.z)
 
-                for j in range(self.n_objectives):
-                    if offspring_obj[j] < self.z[j]:
-                        self.z[j] = offspring_obj[j]
+                for j in neighbors:
+                    neighbor_fitness = self.tchebycheff(
+                        self.population[j]['objectives'],
+                        self.weights[j],
+                        self.z
+                    )
 
-                update_count = 0
-                max_updates = int(self.pop_size * 0.3)
-
-                for j in indices:
-                    if update_count >= max_updates:
-                        break
-
-                    if self.tchebycheff(offspring_obj, self.weights[j], self.z) < \
-                       self.tchebycheff(self.population[j]['objectives'], self.weights[j], self.z):
+                    if child_fitness < neighbor_fitness:
                         self.population[j] = {
-                            'chromosome': offspring,
-                            'objectives': offspring_obj
+                            'chromosome': child_chromosome.copy(),
+                            'objectives': child_objectives.copy()
                         }
-                        update_count += 1
 
-                self.update_external_archive(offspring, offspring_obj)
+                self.update_archive({
+                    'chromosome': child_chromosome,
+                    'objectives': child_objectives
+                })
 
             if generation % 10 == 0:
-                best_lu = max([-ind['objectives'][0] for ind in self.population])
-                best_ss = max([-ind['objectives'][1] for ind in self.population])
-                best_rss = min([ind['objectives'][2] for ind in self.population])
+                print(f"Gen {generation}: Archive={len(self.external_archive)}, Time={elapsed:.1f}s")
+                if self.external_archive:
+                    best = min(self.external_archive, key=lambda x: x['objectives'][0])
+                    print(f"  Best: LU={-best['objectives'][0]:.2f}, SS={-best['objectives'][1]:.4f}")
 
-                print(f"Generation {generation}: Best LU={best_lu:.0f}, SS={best_ss:.4f}, RSS={best_rss:.0f}")
+            generation += 1
 
-                if self.track_metrics and self.external_archive:
-                    archive_objs = np.array([obj for _, obj in self.external_archive])
-                    archive_objs_normalized = np.array([self.normalize_objectives(obj) for obj in archive_objs])
-                    hv = self.metrics_calculator.hypervolume(archive_objs_normalized, ref_point=[1, 1, 1])
-                    self.metrics_history['hypervolume'].append(hv)
-                    print(f"  Metrics: HV={hv:.4f}, Archive={len(self.external_archive)}")
+        total_time = time.time() - start_time
+        print(f"\nMOEA/D completed: {generation} generations in {total_time:.1f}s")
+        print(f"Archive size: {len(self.external_archive)}")
 
-        print("\n" + "="*60)
-        print("MOEA/D Clean completed")
-        print("-"*60)
-        if self.track_metrics and self.metrics_history['hypervolume']:
-            final_hv = self.metrics_history['hypervolume'][-1]
-            print(f"Final Hypervolume: {final_hv:.4f}")
-            print(f"Archive Size: {len(self.external_archive)}")
-        print("="*60)
+        solutions = []
+        for sol in self.external_archive:
+            indices = np.where(sol['chromosome'] == 1)[0]
+            recommendations = [self.package_names[idx] for idx in indices if idx != self.main_package_idx]
+            solutions.append({
+                'recommendations': recommendations,
+                'objectives': sol['objectives'],
+                'linked_usage': -sol['objectives'][0],
+                'semantic_similarity': -sol['objectives'][1],
+                'set_size': sol['objectives'][2]
+            })
 
-        if self.external_archive:
-            pareto_front = []
-            for chromosome, objectives in self.external_archive:
-                pareto_front.append({
-                    'chromosome': chromosome,
-                    'objectives': objectives
-                })
-            return pareto_front
+        return solutions
 
-        pareto_front = []
-        for i, ind_i in enumerate(self.population):
-            dominated = False
-            for j, ind_j in enumerate(self.population):
-                if i != j and self.dominates(ind_j['objectives'], ind_i['objectives']):
-                    dominated = True
-                    break
 
-            if not dominated:
-                pareto_front.append({
-                    'chromosome': ind_i['chromosome'],
-                    'objectives': ind_i['objectives']
-                })
-
-        return pareto_front
+if __name__ == "__main__":
+    optimizer = MOEAD_Timed(
+        main_package='fastapi',
+        pop_size=50,
+        time_budget=20.0
+    )
+    solutions = optimizer.run()
+    print(f"\nFound {len(solutions)} solutions")
